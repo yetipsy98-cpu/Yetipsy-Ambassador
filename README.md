@@ -43,3 +43,13 @@ Change demo passwords before production use.
 - Owner can change their own password using current password verification.
 - Owner can reset passwords for Admin / Staff / Ambassador accounts.
 - New passwords require at least 8 characters.
+
+
+## V1.4.1 password fix
+- Password changes are now verified by re-reading the Users sheet after write.
+- Changing the Owner password invalidates all Owner sessions and forces re-login.
+- Resetting another user's password invalidates all sessions for that user.
+- Login detects duplicate username+role rows instead of silently using the wrong row.
+- New password cannot equal the current password for Owner self-change.
+
+After replacing `Code.gs`, you MUST create a new Apps Script deployment version (or edit the existing deployment to point to the new version).

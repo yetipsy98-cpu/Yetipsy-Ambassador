@@ -59,7 +59,17 @@ function setupSheets(){
 }
 function seedDemoUsers(){setupSheets();const users=rows_(SHEETS.USERS);if(!users.find(x=>String(x.username)==='owner'))append_(SHEETS.USERS,{user_id:uuid_('ADM'),role:'admin',name:'Owner',username:'owner',password_hash:hash_('ChangeMe123!'),commission_rate:'',status:'ACTIVE',created_at:now_()});if(!users.find(x=>String(x.username)==='staff1'))append_(SHEETS.USERS,{user_id:uuid_('STF'),role:'staff',name:'Staff 1',username:'staff1',password_hash:hash_('ChangeMe123!'),commission_rate:'',status:'ACTIVE',created_at:now_()})}
 
-function login_(p){const role=String(p.role||'').toLowerCase();const u=rows_(SHEETS.USERS).find(x=>String(x.username)===String(p.username)&&String(x.role).toLowerCase()===role&&String(x.status||'ACTIVE')==='ACTIVE');if(!u||String(u.password_hash)!==hash_(p.password||''))throw new Error('Invalid login');const token=uuid_('SES');append_(SHEETS.SESSIONS,{session_token:token,user_id:u.user_id,role:u.role,created_at:now_(),expires_at:new Date(Date.now()+1000*60*60*24*7)});return{token,role:u.role,name:u.name,username:u.username,user_id:u.user_id}}
+function login_(p){
+  const role=String(p.role||'').toLowerCase();
+  const username=String(p.username||'').trim();
+  const matches=rows_(SHEETS.USERS).filter(x=>String(x.username).trim()===username&&String(x.role).toLowerCase()===role&&String(x.status||'ACTIVE')==='ACTIVE');
+  if(matches.length>1)throw new Error('Duplicate username detected. Owner must remove duplicate account rows first.');
+  const u=matches[0];
+  if(!u||String(u.password_hash)!==hash_(p.password||''))throw new Error('Invalid login');
+  const token=uuid_('SES');
+  append_(SHEETS.SESSIONS,{session_token:token,user_id:u.user_id,role:u.role,created_at:now_(),expires_at:new Date(Date.now()+1000*60*60*24*7)});
+  return{token,role:u.role,name:u.name,username:u.username,user_id:u.user_id};
+}
 function requireSession_(token){const s=rows_(SHEETS.SESSIONS).find(x=>String(x.session_token)===String(token));if(!s||new Date(s.expires_at)<new Date())throw new Error('Session expired');const u=rows_(SHEETS.USERS).find(x=>String(x.user_id)===String(s.user_id)&&String(x.status||'ACTIVE')==='ACTIVE');if(!u)throw new Error('User not found');return u}
 function createAmbassador_(u,p){requireRole_(u,['admin']);if(!p.name||!p.username||!p.password)throw new Error('Missing fields');if(rows_(SHEETS.USERS).some(x=>String(x.username)===String(p.username)))throw new Error('Username exists');const rate=num_(p.commission_rate);if(rate<0||rate>100)throw new Error('Invalid commission rate');append_(SHEETS.USERS,{user_id:uuid_('AMB'),role:'ambassador',name:p.name,username:p.username,password_hash:hash_(p.password),commission_rate:rate,status:'ACTIVE',created_at:now_()});audit_(u,'CREATE_AMBASSADOR','user',p.username,p.name);return true}
 
@@ -67,23 +77,45 @@ function listManagedUsers_(u){
   requireRole_(u,['admin']);
   return rows_(SHEETS.USERS).filter(x=>['admin','staff','ambassador'].includes(String(x.role))).map(x=>({user_id:x.user_id,role:x.role,name:x.name,username:x.username,status:x.status||'ACTIVE',commission_rate:num_(x.commission_rate)}));
 }
+function deleteSessionsForUser_(userId){
+  const s=sh_(SHEETS.SESSIONS),v=s.getDataRange().getValues();
+  if(v.length<2)return;
+  const h=v[0],idx=h.indexOf('user_id');
+  for(let i=v.length-1;i>=1;i--){
+    if(String(v[i][idx])===String(userId))s.deleteRow(i+1);
+  }
+}
+function writePasswordAndVerify_(userId,newPassword){
+  const newHash=hash_(newPassword);
+  const ok=updateById_(SHEETS.USERS,'user_id',userId,{password_hash:newHash});
+  if(!ok)throw new Error('Password update failed: user row not found');
+  SpreadsheetApp.flush();
+  const fresh=rows_(SHEETS.USERS).find(x=>String(x.user_id)===String(userId));
+  if(!fresh||String(fresh.password_hash)!==newHash)throw new Error('Password update verification failed');
+  return true;
+}
 function resetUserPassword_(u,p){
   requireRole_(u,['admin']);
   const target=rows_(SHEETS.USERS).find(x=>String(x.user_id)===String(p.user_id));
   if(!target)throw new Error('User not found');
   const np=String(p.new_password||'');
   if(np.length<8)throw new Error('新密码至少 8 个字符');
-  updateById_(SHEETS.USERS,'user_id',target.user_id,{password_hash:hash_(np)});
+  writePasswordAndVerify_(target.user_id,np);
+  deleteSessionsForUser_(target.user_id);
   audit_(u,'RESET_PASSWORD','user',target.user_id,`${target.role}/${target.username}`);
-  return true;
+  return{success:true,username:target.username};
 }
 function changeOwnPassword_(u,p){
   const current=String(p.current_password||''),np=String(p.new_password||'');
-  if(String(u.password_hash)!==hash_(current))throw new Error('Current password incorrect');
+  const fresh=rows_(SHEETS.USERS).find(x=>String(x.user_id)===String(u.user_id));
+  if(!fresh)throw new Error('User not found');
+  if(String(fresh.password_hash)!==hash_(current))throw new Error('Current password incorrect');
   if(np.length<8)throw new Error('新密码至少 8 个字符');
-  updateById_(SHEETS.USERS,'user_id',u.user_id,{password_hash:hash_(np)});
+  if(hash_(np)===String(fresh.password_hash))throw new Error('新密码不能和当前密码相同');
+  writePasswordAndVerify_(u.user_id,np);
   audit_(u,'CHANGE_OWN_PASSWORD','user',u.user_id,u.username);
-  return true;
+  deleteSessionsForUser_(u.user_id);
+  return{success:true,force_logout:true};
 }
 function createPayout_(u,p){
   requireRole_(u,['admin']);
