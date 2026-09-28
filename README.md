@@ -1,50 +1,30 @@
-# Yetipsy Ambassador System — Complete Version
+# Yetipsy Ambassador System — V1.2
 
-## Included features
-- Ambassador creates pass with **date + pax mandatory**
-- Ambassador does **not** fill male / female
-- Staff records **actual** pax + male + female
-- Group QR supports **partial redeem**
-- Commission enters wallet **only after checkout/payment**
-- Price logic:
-  - **Normal Day default** = Sunday to Thursday
-  - **Weekend default** = Friday and Saturday
-  - **Special date override** takes priority over defaults
-- Invitation image for customer:
-  - uses `assets/invitation-template.png`
-  - auto inserts **QR + Date + Ref**
-  - if QR fails, Staff can manually search by **Ref**
+## Latest logic
+- Ambassador: date + pax required; no gender input
+- Staff: scan QR and pass info loads automatically
+- If QR fails, Staff can search by Ref printed on invitation
+- Staff enters Male + Female; Pax auto-sums
+- Partial Redeem supported
+- Price is split by gender
+  - Normal Day Male / Female (Sun–Thu)
+  - Weekend Male / Female (Fri–Sat)
+  - Special Date Male / Female override
+- Checkout calculates uncharged gender counts only
+- Commission enters Ambassador wallet only after confirmed payment
+- Ambassador reservation can be edited only before first Staff check-in
+- Invitation image includes QR + date + Ref
 
-## Files
-- `index.html` — login
-- `ambassador.html` — Ambassador dashboard + pass issue + invitation preview/download
-- `staff.html` — Staff scan / partial redeem / checkout
-- `admin.html` — Admin pricing defaults + date override + create ambassador + dashboard
-- `app.js` — shared frontend helpers
-- `styles.css` — styles
-- `config.js` — put your Apps Script Web App URL here
-- `Code.gs` — Google Apps Script backend
-- `assets/invitation-template.png` — invitation background template
-
-## Install steps
-1. Create a Google Sheet
-2. Open **Extensions → Apps Script**
-3. Paste `Code.gs`
-4. Run `setupSheets()` once
-5. Run `seedDemoUsers()` once if you want the demo accounts
-6. Deploy Apps Script as Web App
-   - Execute as: **Me**
-   - Who has access: **Anyone**
-7. Copy the Web App URL into `config.js`
-8. Upload the frontend files to GitHub Pages
+## Install / upgrade
+1. Replace Apps Script code with `Code.gs`
+2. Run `setupSheets()` once — it appends any missing columns for V1.2
+3. Redeploy the Apps Script Web App
+4. Replace GitHub Pages frontend files with this package
+5. Keep your existing `config.js` GAS URL, or paste the deployed URL again
 
 ## Demo accounts
-Only if you ran `seedDemoUsers()`:
+If you run `seedDemoUsers()`:
 - Admin: `owner / ChangeMe123!`
 - Staff: `staff1 / ChangeMe123!`
 
-## Notes
-- Change demo passwords before real use
-- Staff can manually type **Pass Ref** if QR cannot be scanned
-- Ambassador reservations can be edited **only before first check-in**
-- Frontend never decides the final commission or price; backend recalculates it
+Change demo passwords before real operation.
