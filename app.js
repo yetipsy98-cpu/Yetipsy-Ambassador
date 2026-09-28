@@ -1,7 +1,6 @@
 const CFG=()=>window.YETIPSY_CONFIG||{};
 const $=s=>document.querySelector(s); const $$=s=>[...document.querySelectorAll(s)];
 function money(v){return 'RM '+Number(v||0).toFixed(2)}
-function qs(){return new URLSearchParams(location.search)}
 function session(){try{return JSON.parse(localStorage.getItem('yt_session')||'null')}catch(e){return null}}
 function saveSession(x){localStorage.setItem('yt_session',JSON.stringify(x))}
 function logout(){localStorage.removeItem('yt_session');location.href='index.html'}
@@ -17,3 +16,6 @@ async function login(role){
 }
 function requireRole(role){const s=session();if(!s||s.role!==role){location.href='index.html';return false}$('#who')&&($('#who').textContent=s.name||s.username);return true}
 function fmtDate(x){if(!x)return '-';try{return new Date(x).toLocaleString()}catch(e){return x}}
+function esc(v){return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
+function jsq(v){return String(v??'').replace(/\\/g,'\\\\').replace(/'/g,"\\'")}
+function setToday(id){const d=new Date();d.setMinutes(d.getMinutes()-d.getTimezoneOffset()); const el=$(id); if(el) el.value=d.toISOString().slice(0,10)}
