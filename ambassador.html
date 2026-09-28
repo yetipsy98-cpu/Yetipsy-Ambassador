@@ -63,7 +63,7 @@ async function previewInvite(token,ref,dateStr){
   ctx.shadowBlur=5;
   ctx.fillStyle='#dcb45a';
   ctx.font='700 20px Arial, sans-serif';
-  ctx.fillText('REF: '+ref, c.width/2, 1088);
+  ctx.fillText(''+ref, c.width/2, 1088);
   ctx.shadowBlur=0;
 
   $('#qrResult').scrollIntoView({behavior:'smooth',block:'center'});
