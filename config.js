@@ -1,3 +1,3 @@
 window.YETIPSY_CONFIG = {
-  GAS_URL: 'PASTE_YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL_HERE'
+  GAS_URL: 'https://script.google.com/macros/s/AKfycbzjy0UXI_VNLJryVGuxGwxcNYENUX6XifZvH55rdTMoOmpiedUza1YQzQXXeEpHHIUSXA/exec'
 };
