@@ -1,4 +1,4 @@
-const SHEETS={USERS:'Users',PASSES:'QR_Passes',CHECKINS:'Checkins',REDEEMS:'Redeem_Log',WALLET:'Wallet',PRICING:'Daily_Pricing',SETTINGS:'Settings',SESSIONS:'Sessions',AUDIT:'Audit_Log'};
+const SHEETS={USERS:'Users',PASSES:'QR_Passes',CHECKINS:'Checkins',REDEEMS:'Redeem_Log',WALLET:'Wallet',PAYOUTS:'Payouts',PRICING:'Daily_Pricing',SETTINGS:'Settings',SESSIONS:'Sessions',AUDIT:'Audit_Log'};
 const TZ='Asia/Kuala_Lumpur';
 
 function doPost(e){
@@ -11,10 +11,13 @@ function doPost(e){
     const map={
       login:()=>login_(p), ambassadorDashboard:()=>ambassadorDashboard_(user), createPass:()=>createPass_(user,p),
       updatePass:()=>updatePass_(user,p), lookupPass:()=>lookupPass_(user,p), partialRedeem:()=>partialRedeem_(user,p),
-      checkout:()=>checkout_(user,p), staffRecent:()=>staffRecent_(user), adminDashboard:()=>adminDashboard_(user),
+      staffRecent:()=>staffRecent_(user), adminDashboard:()=>adminDashboard_(user),
       createAmbassador:()=>createAmbassador_(user,p), savePricingDefaults:()=>savePricingDefaults_(user,p),
       getPricingDefaults:()=>getPricingDefaults_(user), saveDateOverride:()=>saveDateOverride_(user,p),
-      listDateOverrides:()=>listDateOverrides_(user), deleteDateOverride:()=>deleteDateOverride_(user,p)
+      listDateOverrides:()=>listDateOverrides_(user), deleteDateOverride:()=>deleteDateOverride_(user,p),
+      createPayout:()=>createPayout_(user,p), payoutHistory:()=>payoutHistory_(user,p),
+      listManagedUsers:()=>listManagedUsers_(user), resetUserPassword:()=>resetUserPassword_(user,p),
+      changeOwnPassword:()=>changeOwnPassword_(user,p)
     };
     if(!map[action]) throw new Error('Unknown action');
     return json_({ok:true,data:map[action]()});
@@ -44,6 +47,7 @@ function setupSheets(){
     Checkins:['checkin_ref','pass_id','ambassador_id','staff_id','pax','male','female','table_no','remark','created_at'],
     Redeem_Log:['redeem_ref','pass_id','pass_ref','ambassador_id','staff_id','reservation_date','table_no','male_charged','female_charged','male_price','female_price','sales_amount','commission_rate','commission_amount','final_payment','created_at','status'],
     Wallet:['wallet_txn_id','ambassador_id','redeem_ref','type','amount','created_at'],
+    Payouts:['payout_ref','ambassador_id','amount','method','note','paid_by','created_at'],
     Daily_Pricing:['price_id','price_date','male_price','female_price','note','status','updated_by','updated_at'],
     Settings:['setting_key','setting_value','updated_by','updated_at'],
     Sessions:['session_token','user_id','role','created_at','expires_at'],
@@ -59,6 +63,51 @@ function login_(p){const role=String(p.role||'').toLowerCase();const u=rows_(SHE
 function requireSession_(token){const s=rows_(SHEETS.SESSIONS).find(x=>String(x.session_token)===String(token));if(!s||new Date(s.expires_at)<new Date())throw new Error('Session expired');const u=rows_(SHEETS.USERS).find(x=>String(x.user_id)===String(s.user_id)&&String(x.status||'ACTIVE')==='ACTIVE');if(!u)throw new Error('User not found');return u}
 function createAmbassador_(u,p){requireRole_(u,['admin']);if(!p.name||!p.username||!p.password)throw new Error('Missing fields');if(rows_(SHEETS.USERS).some(x=>String(x.username)===String(p.username)))throw new Error('Username exists');const rate=num_(p.commission_rate);if(rate<0||rate>100)throw new Error('Invalid commission rate');append_(SHEETS.USERS,{user_id:uuid_('AMB'),role:'ambassador',name:p.name,username:p.username,password_hash:hash_(p.password),commission_rate:rate,status:'ACTIVE',created_at:now_()});audit_(u,'CREATE_AMBASSADOR','user',p.username,p.name);return true}
 
+function listManagedUsers_(u){
+  requireRole_(u,['admin']);
+  return rows_(SHEETS.USERS).filter(x=>['admin','staff','ambassador'].includes(String(x.role))).map(x=>({user_id:x.user_id,role:x.role,name:x.name,username:x.username,status:x.status||'ACTIVE',commission_rate:num_(x.commission_rate)}));
+}
+function resetUserPassword_(u,p){
+  requireRole_(u,['admin']);
+  const target=rows_(SHEETS.USERS).find(x=>String(x.user_id)===String(p.user_id));
+  if(!target)throw new Error('User not found');
+  const np=String(p.new_password||'');
+  if(np.length<8)throw new Error('新密码至少 8 个字符');
+  updateById_(SHEETS.USERS,'user_id',target.user_id,{password_hash:hash_(np)});
+  audit_(u,'RESET_PASSWORD','user',target.user_id,`${target.role}/${target.username}`);
+  return true;
+}
+function changeOwnPassword_(u,p){
+  const current=String(p.current_password||''),np=String(p.new_password||'');
+  if(String(u.password_hash)!==hash_(current))throw new Error('Current password incorrect');
+  if(np.length<8)throw new Error('新密码至少 8 个字符');
+  updateById_(SHEETS.USERS,'user_id',u.user_id,{password_hash:hash_(np)});
+  audit_(u,'CHANGE_OWN_PASSWORD','user',u.user_id,u.username);
+  return true;
+}
+function createPayout_(u,p){
+  requireRole_(u,['admin']);
+  const amb=rows_(SHEETS.USERS).find(x=>String(x.user_id)===String(p.ambassador_id)&&String(x.role)==='ambassador');
+  if(!amb)throw new Error('Ambassador not found');
+  const amount=Math.round(num_(p.amount)*100)/100;
+  if(!(amount>0))throw new Error('请输入实际付款金额');
+  const walletRows=rows_(SHEETS.WALLET).filter(x=>String(x.ambassador_id)===String(amb.user_id));
+  const available=Math.round(walletRows.reduce((s,w)=>s+num_(w.amount),0)*100)/100;
+  if(amount>available+0.001)throw new Error('付款金额不能超过可用佣金 '+available.toFixed(2));
+  const ref='YT-PAY-'+Utilities.formatDate(now_(),TZ,'yyMMdd')+'-'+Utilities.getUuid().replace(/-/g,'').slice(0,5).toUpperCase();
+  append_(SHEETS.PAYOUTS,{payout_ref:ref,ambassador_id:amb.user_id,amount,method:p.method||'',note:p.note||'',paid_by:u.user_id,created_at:now_()});
+  append_(SHEETS.WALLET,{wallet_txn_id:uuid_('WLT'),ambassador_id:amb.user_id,redeem_ref:ref,type:'PAYOUT',amount:-amount,created_at:now_()});
+  audit_(u,'AMBASSADOR_PAYOUT','ambassador',amb.user_id,`${amount}; ${p.method||''}; ${p.note||''}`);
+  return{payout_ref:ref,amount,balance:Math.round((available-amount)*100)/100};
+}
+function payoutHistory_(u,p){
+  requireRole_(u,['admin']);
+  let list=rows_(SHEETS.PAYOUTS);
+  if(p&&p.ambassador_id)list=list.filter(x=>String(x.ambassador_id)===String(p.ambassador_id));
+  const users=rows_(SHEETS.USERS);
+  return list.sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,100).map(x=>({...x,ambassador_name:users.find(y=>String(y.user_id)===String(x.ambassador_id))?.name||x.ambassador_id}));
+}
+
 function savePricingDefaults_(u,p){requireRole_(u,['admin']);const vals={normal_male_price:num_(p.normal_male_price),normal_female_price:num_(p.normal_female_price),weekend_male_price:num_(p.weekend_male_price),weekend_female_price:num_(p.weekend_female_price)};Object.entries(vals).forEach(([k,v])=>{if(v<0)throw new Error('Invalid price');setSetting_(k,String(v),u.user_id)});audit_(u,'SAVE_DEFAULT_PRICING','settings','pricing',JSON.stringify(vals));return true}
 function getPricingDefaults_(u){requireRole_(u,['admin']);return{normal_male_price:num_(getSetting_('normal_male_price','0')),normal_female_price:num_(getSetting_('normal_female_price','0')),weekend_male_price:num_(getSetting_('weekend_male_price','0')),weekend_female_price:num_(getSetting_('weekend_female_price','0'))}}
 function saveDateOverride_(u,p){requireRole_(u,['admin']);const d=dateKey_(p.price_date),male=num_(p.male_price),female=num_(p.female_price);if(!/^\d{4}-\d{2}-\d{2}$/.test(d))throw new Error('请选择日期');if(male<0||female<0)throw new Error('Invalid price');const existing=rows_(SHEETS.PRICING).find(x=>dateKey_(x.price_date)===d&&String(x.status||'ACTIVE')==='ACTIVE');if(existing)updateById_(SHEETS.PRICING,'price_id',existing.price_id,{price_date:d,male_price:male,female_price:female,note:p.note||'',status:'ACTIVE',updated_by:u.user_id,updated_at:now_()});else append_(SHEETS.PRICING,{price_id:uuid_('PRICE'),price_date:d,male_price:male,female_price:female,note:p.note||'',status:'ACTIVE',updated_by:u.user_id,updated_at:now_()});audit_(u,'SAVE_DATE_OVERRIDE','pricing',d,`${male}/${female}`);return true}
@@ -72,9 +121,43 @@ function updatePass_(u,p){requireRole_(u,['ambassador']);const pass=rows_(SHEETS
 function lookupPass_(u,p){requireRole_(u,['staff','admin']);const q=String(p.token_or_ref||'').trim();const pass=rows_(SHEETS.PASSES).find(x=>String(x.qr_token)===q||String(x.pass_ref).toUpperCase()===q.toUpperCase());if(!pass)throw new Error('Pass not found');if(String(pass.status)==='VOID')throw new Error('Pass is void');return passView_(pass)}
 
 function partialRedeem_(u,p){requireRole_(u,['staff','admin']);const lock=LockService.getScriptLock();if(!lock.tryLock(10000))throw new Error('System busy, retry');try{return partialLocked_(u,p)}finally{lock.releaseLock()}}
-function partialLocked_(u,p){const pass=rows_(SHEETS.PASSES).find(x=>String(x.pass_id)===String(p.pass_id));if(!pass)throw new Error('Pass not found');if(['PAID','VOID'].includes(String(pass.status)))throw new Error('Pass closed');const m=Math.floor(num_(p.male)),f=Math.floor(num_(p.female)),pax=m+f;if(!(pax>0)||m<0||f<0)throw new Error('请输入男女人数');const nr={pax:num_(pass.actual_pax)+pax,m:num_(pass.actual_male)+m,f:num_(pass.actual_female)+f};append_(SHEETS.CHECKINS,{checkin_ref:uuid_('CI'),pass_id:pass.pass_id,ambassador_id:pass.ambassador_id,staff_id:u.user_id,pax,male:m,female:f,table_no:p.table_no||'',remark:p.remark||'',created_at:now_()});updateById_(SHEETS.PASSES,'pass_id',pass.pass_id,{actual_pax:nr.pax,actual_male:nr.m,actual_female:nr.f,status:'PARTIAL',updated_at:now_()});audit_(u,'PARTIAL_REDEEM','pass',pass.pass_id,`${pax} pax (${m}M/${f}F)`);return{pass:passView_(rows_(SHEETS.PASSES).find(x=>String(x.pass_id)===String(pass.pass_id)))}}
+function partialLocked_(u,p){
+  const pass=rows_(SHEETS.PASSES).find(x=>String(x.pass_id)===String(p.pass_id));
+  if(!pass)throw new Error('Pass not found');
+  if(['CLOSED','PAID','VOID'].includes(String(pass.status)))throw new Error('Pass closed');
+  const m=Math.floor(num_(p.male)),f=Math.floor(num_(p.female)),pax=m+f;
+  if(!(pax>0)||m<0||f<0)throw new Error('请输入男女人数');
+  const price=getPriceForDate_(dateKey_(pass.reservation_date)),mp=num_(price.male_price),fp=num_(price.female_price);
+  const sales=Math.round((m*mp+f*fp)*100)/100;
+  const amb=rows_(SHEETS.USERS).find(x=>String(x.user_id)===String(pass.ambassador_id));
+  if(!amb)throw new Error('Ambassador not found');
+  const rate=num_(amb.commission_rate),commission=Math.round(sales*rate)/100;
+  const nr={pax:num_(pass.actual_pax)+pax,m:num_(pass.actual_male)+m,f:num_(pass.actual_female)+f};
+  const closed=nr.pax>=num_(pass.planned_pax);
+  const checkin_ref=uuid_('CI');
+  const redeem_ref='YT-RD-'+Utilities.formatDate(now_(),TZ,'yyMMdd')+'-'+Utilities.getUuid().replace(/-/g,'').slice(0,5).toUpperCase();
+  append_(SHEETS.CHECKINS,{checkin_ref,pass_id:pass.pass_id,ambassador_id:pass.ambassador_id,staff_id:u.user_id,pax,male:m,female:f,table_no:p.table_no||'',remark:p.remark||'',created_at:now_()});
+  append_(SHEETS.REDEEMS,{redeem_ref,pass_id:pass.pass_id,pass_ref:pass.pass_ref,ambassador_id:pass.ambassador_id,staff_id:u.user_id,reservation_date:dateKey_(pass.reservation_date),table_no:p.table_no||'',male_charged:m,female_charged:f,male_price:mp,female_price:fp,sales_amount:sales,commission_rate:rate,commission_amount:commission,final_payment:closed?'YES':'NO',created_at:now_(),status:'CONFIRMED'});
+  append_(SHEETS.WALLET,{wallet_txn_id:uuid_('WLT'),ambassador_id:pass.ambassador_id,redeem_ref,type:'COMMISSION',amount:commission,created_at:now_()});
+  const newSales=Math.round((num_(pass.sales)+sales)*100)/100;
+  updateById_(SHEETS.PASSES,'pass_id',pass.pass_id,{actual_pax:nr.pax,actual_male:nr.m,actual_female:nr.f,sales:newSales,status:closed?'CLOSED':'PARTIAL',updated_at:now_(),closed_at:closed?now_():''});
+  audit_(u,'CHECKIN_PAYMENT','pass',pass.pass_id,`${m}M@${mp}+${f}F@${fp}=${sales}; commission=${commission}; closed=${closed}`);
+  return{checkin_ref,redeem_ref,sales_amount:sales,commission_amount:commission,closed,pass:passView_(rows_(SHEETS.PASSES).find(x=>String(x.pass_id)===String(pass.pass_id)))};
+}
+
 function checkout_(u,p){requireRole_(u,['staff','admin']);const lock=LockService.getScriptLock();if(!lock.tryLock(10000))throw new Error('System busy, retry');try{const pass=rows_(SHEETS.PASSES).find(x=>String(x.pass_id)===String(p.pass_id));if(!pass)throw new Error('Pass not found');if(['PAID','VOID'].includes(String(pass.status)))throw new Error('Pass closed');if(num_(pass.actual_pax)<=0)throw new Error('请先登记实际到场人数');const price=getPriceForDate_(dateKey_(pass.reservation_date)),mp=num_(price.male_price),fp=num_(price.female_price);const existing=rows_(SHEETS.REDEEMS).filter(x=>String(x.pass_id)===String(pass.pass_id)&&String(x.status)==='CONFIRMED');const chargedM=existing.reduce((s,r)=>s+num_(r.male_charged),0),chargedF=existing.reduce((s,r)=>s+num_(r.female_charged),0);const dueM=Math.max(0,num_(pass.actual_male)-chargedM),dueF=Math.max(0,num_(pass.actual_female)-chargedF);const sales=Math.round((dueM*mp+dueF*fp)*100)/100;if(!(sales>0))throw new Error('目前没有新的应收金额');const amb=rows_(SHEETS.USERS).find(x=>String(x.user_id)===String(pass.ambassador_id));if(!amb)throw new Error('Ambassador not found');const rate=num_(amb.commission_rate),commission=Math.round(sales*rate)/100;const redeem_ref='YT-RD-'+Utilities.formatDate(now_(),TZ,'yyMMdd')+'-'+Utilities.getUuid().replace(/-/g,'').slice(0,5).toUpperCase();append_(SHEETS.REDEEMS,{redeem_ref,pass_id:pass.pass_id,pass_ref:pass.pass_ref,ambassador_id:pass.ambassador_id,staff_id:u.user_id,reservation_date:dateKey_(pass.reservation_date),table_no:p.table_no||'',male_charged:dueM,female_charged:dueF,male_price:mp,female_price:fp,sales_amount:sales,commission_rate:rate,commission_amount:commission,final_payment:String(p.final_payment)==='1'?'YES':'NO',created_at:now_(),status:'CONFIRMED'});append_(SHEETS.WALLET,{wallet_txn_id:uuid_('WLT'),ambassador_id:pass.ambassador_id,redeem_ref,type:'COMMISSION',amount:commission,created_at:now_()});const newSales=Math.round((num_(pass.sales)+sales)*100)/100,newStatus=String(p.final_payment)==='1'?'PAID':'PARTIALLY_PAID';updateById_(SHEETS.PASSES,'pass_id',pass.pass_id,{sales:newSales,status:newStatus,updated_at:now_(),closed_at:newStatus==='PAID'?now_():''});audit_(u,'CHECKOUT','pass',pass.pass_id,`${dueM}M@${mp}+${dueF}F@${fp}=${sales}`);return{redeem_ref,commission,sales_amount:sales,male_charged:dueM,female_charged:dueF,male_price:mp,female_price:fp,pass:passView_(rows_(SHEETS.PASSES).find(x=>String(x.pass_id)===String(pass.pass_id)))}}finally{lock.releaseLock()}}
 
-function ambassadorDashboard_(u){requireRole_(u,['ambassador']);const passes=rows_(SHEETS.PASSES).filter(x=>String(x.ambassador_id)===String(u.user_id)).map(passView_).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));const wallet=rows_(SHEETS.WALLET).filter(x=>String(x.ambassador_id)===String(u.user_id));return{sales:passes.reduce((a,x)=>a+num_(x.sales),0),wallet:wallet.reduce((a,x)=>a+num_(x.amount),0),issued_count:passes.length,redeemed_count:passes.filter(x=>num_(x.sales)>0).length,passes,wallet_history:wallet.sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,100)}}
+function ambassadorPriceCalendar_(){
+  const today=dateKey_(now_()),base=new Date(today+'T00:00:00');
+  const days=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const out=[];
+  for(let i=0;i<7;i++){
+    const d=new Date(base);d.setDate(base.getDate()+i);
+    const key=Utilities.formatDate(d,TZ,'yyyy-MM-dd'),p=getPriceForDate_(key);
+    out.push({date:key,day_label:(i===0?'Today · ':'')+days[d.getDay()]+' '+Utilities.formatDate(d,TZ,'dd/MM'),male_price:num_(p.male_price),female_price:num_(p.female_price),source:p.source||'',is_today:i===0});
+  }
+  return out;
+}
+function ambassadorDashboard_(u){requireRole_(u,['ambassador']);const passes=rows_(SHEETS.PASSES).filter(x=>String(x.ambassador_id)===String(u.user_id)).map(passView_).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));const wallet=rows_(SHEETS.WALLET).filter(x=>String(x.ambassador_id)===String(u.user_id));const cal=ambassadorPriceCalendar_();const earned=wallet.filter(x=>String(x.type)==='COMMISSION').reduce((a,x)=>a+num_(x.amount),0),paid=Math.abs(wallet.filter(x=>String(x.type)==='PAYOUT').reduce((a,x)=>a+num_(x.amount),0));return{sales:passes.reduce((a,x)=>a+num_(x.sales),0),wallet:wallet.reduce((a,x)=>a+num_(x.amount),0),commission_earned:earned,commission_paid:paid,issued_count:passes.length,redeemed_count:passes.filter(x=>num_(x.sales)>0).length,today_price:cal[0]||null,price_calendar:cal,passes,wallet_history:wallet.sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,100)}}
 function staffRecent_(u){requireRole_(u,['staff','admin']);return rows_(SHEETS.REDEEMS).filter(x=>String(u.role)==='admin'||String(x.staff_id)===String(u.user_id)).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,50)}
-function adminDashboard_(u){requireRole_(u,['admin']);const users=rows_(SHEETS.USERS),wallet=rows_(SHEETS.WALLET),redeems=rows_(SHEETS.REDEEMS),checkins=rows_(SHEETS.CHECKINS);const ambassadors=users.filter(x=>String(x.role)==='ambassador').map(a=>({...a,wallet:wallet.filter(w=>String(w.ambassador_id)===String(a.user_id)).reduce((s,w)=>s+num_(w.amount),0)}));return{total_sales:redeems.reduce((s,r)=>s+num_(r.sales_amount),0),total_commission:redeems.reduce((s,r)=>s+num_(r.commission_amount),0),total_pax:checkins.reduce((s,c)=>s+num_(c.pax),0),ambassadors,redeems:redeems.sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,100).map(r=>({...r,ambassador_name:users.find(x=>String(x.user_id)===String(r.ambassador_id))?.name||r.ambassador_id}))}}
+function adminDashboard_(u){requireRole_(u,['admin']);const users=rows_(SHEETS.USERS),wallet=rows_(SHEETS.WALLET),redeems=rows_(SHEETS.REDEEMS),checkins=rows_(SHEETS.CHECKINS);const ambassadors=users.filter(x=>String(x.role)==='ambassador').map(a=>{const w=wallet.filter(x=>String(x.ambassador_id)===String(a.user_id));const earned=w.filter(x=>String(x.type)==='COMMISSION').reduce((s,x)=>s+num_(x.amount),0),paid=Math.abs(w.filter(x=>String(x.type)==='PAYOUT').reduce((s,x)=>s+num_(x.amount),0));return{...a,wallet:w.reduce((s,x)=>s+num_(x.amount),0),commission_earned:earned,commission_paid:paid}});return{total_sales:redeems.reduce((s,r)=>s+num_(r.sales_amount),0),total_commission:redeems.reduce((s,r)=>s+num_(r.commission_amount),0),total_pax:checkins.reduce((s,c)=>s+num_(c.pax),0),ambassadors,redeems:redeems.sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,100).map(r=>({...r,ambassador_name:users.find(x=>String(x.user_id)===String(r.ambassador_id))?.name||r.ambassador_id}))}}
