@@ -7,7 +7,7 @@
 <div class="card compact-card"><h3 class="section-title">My Passes</h3><div class="muted" style="margin-bottom:10px">未开始 Check-in 的预定可以修改。</div><div id="passes" class="list"></div></div></div>
 <div class="card compact-card hidden" id="editCard" style="margin-top:12px"><h3 class="section-title">Edit Reservation</h3><input id="editId" type="hidden"><div class="grid g2"><label>Date *<input id="editDate" type="date"></label><label>Pax *<input id="editPax" type="number" min="1"></label></div><label>Type<select id="editType"><option value="GROUP">Group</option><option value="INDIVIDUAL">Individual</option></select></label><label>Label / Name<input id="editLabel"></label><label>Remark<textarea id="editRemark"></textarea></label><div class="row" style="margin-top:14px"><button onclick="saveEdit()">Save Changes</button><button class="btn2" onclick="cancelEdit()">Cancel</button></div></div>
 <div class="card compact-card" style="margin-top:12px"><h3 class="section-title">Wallet History</h3><div id="walletList"></div></div></div>
-<div id="qrTemp" class="hidden"></div>
+<div id="qrTemp" class="hidden"></div><div id="inviteQRTemp" class="hidden"></div>
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script><script src="config.js"></script><script src="app.js"></script><script>
 let dashboard=null,lastInvite=null;if(requireRole('ambassador')){setToday('#rdate');load()}
 async function load(){try{const d=await api('ambassadorDashboard');dashboard=d;$('#sales').textContent=money(d.sales);$('#wallet').textContent=money(d.wallet);$('#count').textContent=`${d.redeemed_count} / ${d.issued_count}`;if(d.today_price){$('#todayMale').textContent=money(d.today_price.male_price);$('#todayFemale').textContent=money(d.today_price.female_price);$('#todayRule').textContent=d.today_price.source||''}$('#miniPrices').innerHTML=(d.price_calendar||[]).map(x=>`<div class="mini-price-row ${x.is_today?'today':''}"><span>${esc(x.day_label)}</span><span>${money(x.male_price)} M</span><span>${money(x.female_price)} F</span></div>`).join('');$('#passes').innerHTML=d.passes.map(p=>`<div class="item"><div class="row between"><b>${esc(p.label||p.pass_ref)}</b><span class="pill">${esc(p.status)}</span></div><div class="muted">${esc(p.reservation_date)} · ${esc(p.type)} · ${esc(p.pass_ref)}</div><div style="margin-top:6px">Reserved: <b>${Number(p.planned_pax||0)} pax</b></div><div>Actual: ${Number(p.actual_pax||0)} pax (${Number(p.actual_male||0)}M/${Number(p.actual_female||0)}F)</div><div>Sales: <b>${money(p.sales||0)}</b></div><div class="row" style="margin-top:8px"><button class="btn2" onclick="previewInvite('${jsq(p.qr_token)}','${jsq(p.pass_ref)}','${jsq(p.reservation_date)}')">Invitation</button>${p.can_edit?`<button class="btn2" onclick="editPass('${p.pass_id}')">Edit</button>`:''}</div></div>`).join('')||'<div class="muted">No passes yet</div>';$('#walletList').innerHTML=`<table><tr><th>Ref</th><th>Type</th><th>Amount</th><th>Time</th></tr>${d.wallet_history.map(x=>`<tr><td>${esc(x.redeem_ref||'-')}</td><td>${esc(x.type)}</td><td class="money">${money(x.amount)}</td><td>${fmtDate(x.created_at)}</td></tr>`).join('')}</table>`}catch(e){toast(e.message,'error')}}
@@ -19,26 +19,53 @@ function showRawQR(){ $('#rawQR').classList.toggle('hidden') }
 async function previewInvite(token,ref,dateStr){
   $('#qrResult').classList.remove('hidden');
   lastInvite={token,ref,dateStr};
+
+  // Raw QR remains black/white for fallback display
   $('#qrcode').innerHTML='';
   new QRCode($('#qrcode'),{text:'YT:'+token,width:220,height:220});
   $('#passref').textContent='Ref: '+ref;
-  await new Promise(r=>setTimeout(r,220));
-  const source=$('#qrcode canvas')||$('#qrcode img');
+
+  // Invitation QR uses black background + gold modules for style
+  const inviteHolder=$('#inviteQRTemp');
+  inviteHolder.innerHTML='';
+  new QRCode(inviteHolder,{text:'YT:'+token,width:300,height:300,colorDark:'#d6b15a',colorLight:'#0a0a0a'});
+
+  await new Promise(r=>setTimeout(r,260));
+  const source=inviteHolder.querySelector('canvas')||inviteHolder.querySelector('img');
   if(!source){toast('QR generation failed','error');return}
+
   const bg=new Image(); bg.src='assets/invitation-template.png';
   await new Promise((resolve,reject)=>{bg.onload=resolve; bg.onerror=reject});
   const qrImg = new Image(); qrImg.src = source.tagName==='CANVAS' ? source.toDataURL('image/png') : source.src;
   await new Promise((resolve,reject)=>{qrImg.onload=resolve; qrImg.onerror=reject});
+
   const c=$('#inviteCanvas'),ctx=c.getContext('2d');
-  ctx.clearRect(0,0,c.width,c.height); ctx.drawImage(bg,0,0,c.width,c.height);
-  const qx=263,qy=693,qw=338,qh=338; ctx.fillStyle='#fff'; ctx.fillRect(qx,qy,qw,qh); ctx.drawImage(qrImg,qx+18,qy+18,qw-36,qh-36);
+  ctx.clearRect(0,0,c.width,c.height);
+  ctx.drawImage(bg,0,0,c.width,c.height);
+
+  // Move QR/date/ref upward and make colors closer to the provided gold reference
+  const panelX=215,panelY=600,panelW=434,panelH=555;
+  ctx.fillStyle='rgba(0,0,0,0.28)';
+  ctx.fillRect(panelX,panelY,panelW,panelH);
+
+  const qx=282,qy=667,qw=300,qh=300;
+  ctx.fillStyle='#0a0a0a';
+  ctx.fillRect(qx,qy,qw,qh);
+  ctx.drawImage(qrImg,qx,qy,qw,qh);
+
   ctx.textAlign='center';
-  ctx.fillStyle='#f2d37a';
-  ctx.font='600 34px serif';
-  ctx.fillText(formatDateCard(dateStr), c.width/2, 1118);
-  ctx.font='600 21px sans-serif';
-  ctx.fillStyle='#e8c86e';
-  ctx.fillText('REF: '+ref, c.width/2, 1162);
+  ctx.shadowColor='rgba(255,215,120,0.28)';
+  ctx.shadowBlur=8;
+  ctx.fillStyle='#edd37f';
+  ctx.font='600 34px Georgia, serif';
+  ctx.fillText(formatDateCard(dateStr), c.width/2, 1048);
+
+  ctx.shadowBlur=5;
+  ctx.fillStyle='#dcb45a';
+  ctx.font='700 20px Arial, sans-serif';
+  ctx.fillText('REF: '+ref, c.width/2, 1088);
+  ctx.shadowBlur=0;
+
   $('#qrResult').scrollIntoView({behavior:'smooth',block:'center'});
 }
 function formatDateCard(s){const m=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC']; const [y,mo,d]=String(s).split('-'); return `${d} ${m[Number(mo)-1]||''} ${y}`}

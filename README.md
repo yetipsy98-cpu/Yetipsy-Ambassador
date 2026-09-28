@@ -53,3 +53,9 @@ Change demo passwords before production use.
 - New password cannot equal the current password for Owner self-change.
 
 After replacing `Code.gs`, you MUST create a new Apps Script deployment version (or edit the existing deployment to point to the new version).
+
+
+## V1.4.2 invitation update
+- Invitation QR style changed to **black background + gold modules**
+- Date and Ref moved upward to sit closer to the QR frame
+- Raw black/white QR is still available as fallback preview
