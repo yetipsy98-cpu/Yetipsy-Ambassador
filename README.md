@@ -1,48 +1,59 @@
-# Yetipsy Ambassador V1
+# Yetipsy Ambassador System — Production V1
 
-GitHub Pages + Google Apps Script + Google Sheets MVP.
+GitHub Pages frontend + Google Apps Script API + Google Sheets database.
 
-## Current V1 flow
+## Final business flow
 
-1. Ambassador logs in and issues an Individual or Group Guest Pass QR.
-2. Customer has no account / customer portal; they only receive the QR image.
-3. Staff scans the QR.
-4. Staff can record actual arrival data, including a different pax / male / female split from the ambassador's original plan.
-5. Group passes support repeated Partial Redeem / Check-in. Planned pax is not a hard limit.
-6. Staff enters final sales at checkout.
-7. Only checkout creates Sales and credits Commission into the Ambassador Wallet.
-8. A checkout can be partial or final. Final checkout closes the pass.
+1. Ambassador logs in and creates a reservation/pass.
+2. Reservation Date and Pax are mandatory. Ambassador does **not** enter male/female.
+3. Ambassador shares the QR directly with the customer. There is no customer portal.
+4. Before any Staff Check-in, Ambassador can edit Date, Pax, Type, Label and Remark.
+5. Once Staff starts Check-in / Partial Redeem, the Ambassador reservation becomes locked.
+6. Staff scans the QR and records the **actual** arriving Pax, Male and Female. Repeated Partial Redeem is supported and actual pax can be higher or lower than the original reservation.
+7. Admin configures a different `Price / Pax` for each date in the Daily Price calendar.
+8. Staff automatically sees the price matching the reservation date. Amount is calculated as `Actual Pax × Daily Price`.
+9. Checkout only charges the unpaid difference. Example: 4 pax paid first, 2 more arrive later, the next checkout only charges the additional 2 pax.
+10. Only a confirmed Checkout writes Sales and credits Commission into the Ambassador Wallet.
 
-## Google Sheets / Apps Script setup
+## Google Sheets setup / migration
 
-1. Create a new Google Sheet.
-2. Extensions -> Apps Script.
-3. Paste `Code.gs` into the script project.
-4. Run `setupSheets()` once.
-5. Run `seedDemoUsers()` once.
-6. Deploy -> New deployment -> Web app.
+1. Create or open the Google Sheet used by the system.
+2. Extensions → Apps Script.
+3. Replace the project code with `Code.gs`.
+4. Run `setupSheets()` once. It will create missing sheets and append missing columns to an older V1 sheet.
+5. If this is a new installation, run `seedDemoUsers()` once.
+6. Deploy → Manage deployments → edit/new Web App deployment.
    - Execute as: Me
    - Who has access: Anyone
-7. Copy the Web App URL.
-8. Put that URL into `config.js`.
-9. Push the frontend files to GitHub Pages.
+7. Copy the deployed Web App URL to `config.js`.
+8. Upload the frontend files to GitHub Pages.
 
-## Demo logins
+## Initial test accounts
 
-After `seedDemoUsers()`:
+Only when `seedDemoUsers()` is run:
 
 - Admin: `owner` / `ChangeMe123!`
 - Staff: `staff1` / `ChangeMe123!`
 
-Change these immediately before production use.
+Change test passwords before real operation.
 
-## Create the first Ambassador
+## Sheets
 
-Login as Admin and use the Create Ambassador form.
+- `Users` — Admin / Staff / Ambassador users and commission rate
+- `QR_Passes` — reservation/pass, planned pax, actual pax and sales
+- `Checkins` — each Partial Redeem / actual arrival batch
+- `Redeem_Log` — confirmed payment / sales records
+- `Wallet` — immutable commission transaction history
+- `Daily_Pricing` — per-date price per pax
+- `Sessions` — login sessions
+- `Audit_Log` — important actions
 
-## Notes before production
+## Important rules enforced by backend
 
-- Treat this as an MVP. Add rate limiting, stronger session invalidation, payout workflows, void/reversal tools, and backup procedures before relying on it for real money at scale.
-- Google Sheets is acceptable for a small venue MVP, but simultaneous writes are protected only with Apps Script locks and will not scale like a real database.
-- Commission is calculated on the Apps Script backend. The frontend never submits the commission amount.
-- Wallet is transaction-based; each confirmed checkout writes a commission transaction.
+- Price and commission are never accepted from the browser as authoritative values.
+- Daily price is read again by Apps Script during Checkout.
+- Commission is calculated by Apps Script using the Ambassador's stored commission rate.
+- Ambassador edits are blocked after Staff begins Check-in.
+- Male + Female must equal the actual check-in pax for each Partial Redeem.
+- A checkout cannot happen until actual pax exists and a price has been set for that reservation date.
+- Repeated check-ins and repeated checkout are supported; only the unpaid amount is charged each time.
