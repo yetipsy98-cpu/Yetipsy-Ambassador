@@ -14,7 +14,7 @@ async function api(action,data={}){
 async function login(role){
   try{const username=$('#username').value.trim(),password=$('#password').value; const d=await api('login',{role,username,password});saveSession(d);location.href=role+'.html'}catch(e){toast(e.message,'error')}
 }
-function requireRole(role){const s=session();if(!s||s.role!==role){location.href='index.html';return false}$('#who')&&($('#who').textContent=s.name||s.username);return true}
+function requireRole(role){const s=session();const allowed=!!s&&(s.role===role||s.role==='admin');if(!allowed){location.href='index.html';return false}$('#who')&&($('#who').textContent=s.name||s.username);return true}
 function fmtDate(x){if(!x)return '-';try{return new Date(x).toLocaleString()}catch(e){return x}}
 function esc(v){return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
 function jsq(v){return String(v??'').replace(/\\/g,'\\\\').replace(/'/g,"\\'")}

@@ -59,3 +59,12 @@ After replacing `Code.gs`, you MUST create a new Apps Script deployment version 
 - Invitation QR style changed to **black background + gold modules**
 - Date and Ref moved upward to sit closer to the QR frame
 - Raw black/white QR is still available as fallback preview
+
+
+## V1.5 Owner Super Mode
+- Owner/Admin can switch between **Owner Dashboard / Staff Mode / Ambassador Mode** without logging in again.
+- Owner can generate and edit its own Guest Passes.
+- Owner in Staff Mode can override **Male Price / Female Price for that single check-in only**.
+- Ordinary Staff cannot see or submit custom pricing.
+- Custom check-in price does not change Normal Day / Weekend / Special Date settings.
+- After replacing `Code.gs`, deploy a **new Apps Script Web App version**.
