@@ -68,3 +68,9 @@ After replacing `Code.gs`, you MUST create a new Apps Script deployment version 
 - Ordinary Staff cannot see or submit custom pricing.
 - Custom check-in price does not change Normal Day / Weekend / Special Date settings.
 - After replacing `Code.gs`, deploy a **new Apps Script Web App version**.
+
+
+## V1.6 Pass visibility
+- Staff sees all passes reserved for today and can open one directly without scanning.
+- Owner sees valid passes for today + next 2 days, excluding CLOSED / PAID / VOID.
+- Owner also sees all issued passes across all reservation dates.

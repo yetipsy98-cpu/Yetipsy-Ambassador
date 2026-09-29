@@ -17,7 +17,7 @@ function doPost(e){
       listDateOverrides:()=>listDateOverrides_(user), deleteDateOverride:()=>deleteDateOverride_(user,p),
       createPayout:()=>createPayout_(user,p), payoutHistory:()=>payoutHistory_(user,p),
       listManagedUsers:()=>listManagedUsers_(user), resetUserPassword:()=>resetUserPassword_(user,p),
-      changeOwnPassword:()=>changeOwnPassword_(user,p)
+      changeOwnPassword:()=>changeOwnPassword_(user,p), todayPasses:()=>todayPasses_(user), ownerPasses:()=>ownerPasses_(user)
     };
     if(!map[action]) throw new Error('Unknown action');
     return json_({ok:true,data:map[action]()});
@@ -199,3 +199,24 @@ function ambassadorPriceCalendar_(){
 function ambassadorDashboard_(u){requireRole_(u,['ambassador','admin']);const passes=rows_(SHEETS.PASSES).filter(x=>String(x.ambassador_id)===String(u.user_id)).map(passView_).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));const wallet=rows_(SHEETS.WALLET).filter(x=>String(x.ambassador_id)===String(u.user_id));const cal=ambassadorPriceCalendar_();const earned=wallet.filter(x=>String(x.type)==='COMMISSION').reduce((a,x)=>a+num_(x.amount),0),paid=Math.abs(wallet.filter(x=>String(x.type)==='PAYOUT').reduce((a,x)=>a+num_(x.amount),0));return{sales:passes.reduce((a,x)=>a+num_(x.sales),0),wallet:wallet.reduce((a,x)=>a+num_(x.amount),0),commission_earned:earned,commission_paid:paid,issued_count:passes.length,redeemed_count:passes.filter(x=>num_(x.sales)>0).length,today_price:cal[0]||null,price_calendar:cal,passes,wallet_history:wallet.sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,100)}}
 function staffRecent_(u){requireRole_(u,['staff','admin']);return rows_(SHEETS.REDEEMS).filter(x=>String(u.role)==='admin'||String(x.staff_id)===String(u.user_id)).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,50)}
 function adminDashboard_(u){requireRole_(u,['admin']);const users=rows_(SHEETS.USERS),wallet=rows_(SHEETS.WALLET),redeems=rows_(SHEETS.REDEEMS),checkins=rows_(SHEETS.CHECKINS);const ambassadors=users.filter(x=>String(x.role)==='ambassador').map(a=>{const w=wallet.filter(x=>String(x.ambassador_id)===String(a.user_id));const earned=w.filter(x=>String(x.type)==='COMMISSION').reduce((s,x)=>s+num_(x.amount),0),paid=Math.abs(w.filter(x=>String(x.type)==='PAYOUT').reduce((s,x)=>s+num_(x.amount),0));return{...a,wallet:w.reduce((s,x)=>s+num_(x.amount),0),commission_earned:earned,commission_paid:paid}});return{total_sales:redeems.reduce((s,r)=>s+num_(r.sales_amount),0),total_commission:redeems.reduce((s,r)=>s+num_(r.commission_amount),0),total_pax:checkins.reduce((s,c)=>s+num_(c.pax),0),ambassadors,redeems:redeems.sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,100).map(r=>({...r,ambassador_name:users.find(x=>String(x.user_id)===String(r.ambassador_id))?.name||r.ambassador_id}))}}
+
+
+function passListView_(p){
+  const users=rows_(SHEETS.USERS);
+  const amb=users.find(x=>String(x.user_id)===String(p.ambassador_id));
+  return {pass_id:p.pass_id,pass_ref:p.pass_ref,qr_token:p.qr_token,ambassador_id:p.ambassador_id,ambassador_name:amb?.name||p.ambassador_id,type:p.type,label:p.label||'',reservation_date:dateKey_(p.reservation_date),planned_pax:num_(p.planned_pax),actual_pax:num_(p.actual_pax),actual_male:num_(p.actual_male),actual_female:num_(p.actual_female),sales:num_(p.sales),status:String(p.status||''),created_at:p.created_at};
+}
+function todayPasses_(u){
+  requireRole_(u,['staff','admin']);
+  const today=Utilities.formatDate(now_(),TZ,'yyyy-MM-dd');
+  return rows_(SHEETS.PASSES).filter(x=>dateKey_(x.reservation_date)===today).map(passListView_).sort((a,b)=>String(a.status).localeCompare(String(b.status))||new Date(b.created_at)-new Date(a.created_at));
+}
+function ownerPasses_(u){
+  requireRole_(u,['admin']);
+  const today=new Date(Utilities.formatDate(now_(),TZ,'yyyy-MM-dd')+'T00:00:00');
+  const end=new Date(today); end.setDate(end.getDate()+2);
+  const all=rows_(SHEETS.PASSES).map(passListView_).sort((a,b)=>String(b.reservation_date).localeCompare(String(a.reservation_date))||new Date(b.created_at)-new Date(a.created_at));
+  const closed=new Set(['CLOSED','PAID','VOID']);
+  const valid3=all.filter(x=>{const d=new Date(x.reservation_date+'T00:00:00');return d>=today&&d<=end&&!closed.has(String(x.status));});
+  return {valid_3_days:valid3,all_passes:all.slice(0,500)};
+}
